@@ -71,11 +71,11 @@ neural-network-from-scratch/
 
 This is an active learning project. Planned additions:
 
-- > Learning rate decay
-- > Batch Normalization
-- > Dropout regularization
-- > Modular layer-based architecture (v2)
-- > Paper-style documentation with full derivations
+- [ ] Learning rate decay
+- [ ] Batch Normalization
+- [ ] Dropout regularization
+- [ ] Modular layer-based architecture (v2)
+- [ ] Paper-style documentation with full derivations
 
 ---
 
