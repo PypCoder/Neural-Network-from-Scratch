@@ -1,7 +1,7 @@
 import numpy as np
 
 class NeuralNetwork:
-    def __init__(self, layer_sizes, output='softmax'):
+    def __init__(self, layer_sizes, output='softmax', batch_norm = True):
         """
         layer_sizes : list of ints  e.g. [784, 128, 64, 10]
         output      : 'softmax'  → multiclass  (use with 'categorical')
@@ -10,6 +10,7 @@ class NeuralNetwork:
         """
         np.random.seed(42)
         self.output = output
+        self.batch_norm = batch_norm
         self.weights = []
         self.biases = []
         self.m_w = []
@@ -17,6 +18,15 @@ class NeuralNetwork:
         self.m_b = []
         self.v_b = []
         self.t = 0
+        self.gamma = [np.ones((1, size))  for size in layer_sizes[1:-1]]
+        self.beta  = [np.zeros((1, size)) for size in layer_sizes[1:-1]]
+        self.running_mean = [np.zeros((1, size)) for size in layer_sizes[1:-1]]
+        self.running_var  = [np.ones((1, size))  for size in layer_sizes[1:-1]]
+        self.Z_norm = [np.zeros((1, size)) for size in layer_sizes[1:-1]]
+        self.Z_var = [np.ones((1, size)) for size in layer_sizes[1:-1]]
+        self.Z_mean = [np.zeros((1, size)) for size in layer_sizes[1:-1]]
+        self.dgamma = [np.zeros_like(g) for g in self.gamma]
+        self.dbeta  = [np.zeros_like(b) for b in self.beta]
 
         for i in range(len(layer_sizes) - 1):
             W = np.random.randn(layer_sizes[i], layer_sizes[i+1]) * np.sqrt(2 / layer_sizes[i])
@@ -75,10 +85,31 @@ class NeuralNetwork:
         else:
             raise ValueError(f"Unknown loss: '{loss}'. Use 'categorical', 'binary', or 'mse'.")
 
+    def batchnorm_forward(self, Z, layer_idx, training=True):
+      eps = 1e-8
+      if training:
+        m = np.mean(Z, axis=0)
+        v = np.var(Z, axis=0)
+
+        self.running_mean[layer_idx] = 0.9 * self.running_mean[layer_idx] + 0.1 * m
+        self.running_var[layer_idx] = 0.9 * self.running_var[layer_idx] + 0.1 * v
+      else:
+        m = self.running_mean[layer_idx]
+        v = self.running_var[layer_idx]
+
+      Z_norm = (Z - m) / np.sqrt(v + eps)
+      Z_out = self.gamma[layer_idx] * Z_norm + self.beta[layer_idx]
+
+      self.Z_norm[layer_idx] = Z_norm
+      self.Z_var[layer_idx]  = v
+      self.Z_mean[layer_idx] = m
+
+      return Z_out
+
     # ------------------------------------------------------------------ #
     #  Forward                                                             #
     # ------------------------------------------------------------------ #
-    def forward(self, X):
+    def forward(self, X, training=True):
         """
         Hidden layers  → always ReLU
         Output layer   → determined by self.output ('softmax', 'sigmoid', 'linear')
@@ -88,7 +119,6 @@ class NeuralNetwork:
 
         for i in range(len(self.weights)):
             z = self.A[i] @ self.weights[i] + self.biases[i]
-            self.Z.append(z)
 
             if i == len(self.weights) - 1:          # output layer
                 if self.output == 'softmax':
@@ -98,8 +128,11 @@ class NeuralNetwork:
                 else:                               # linear
                     a = z
             else:                                   # hidden layers
-                a = self.relu(z)
+              if self.batch_norm:
+                z = self.batchnorm_forward(z, layer_idx=i, training=training)
+              a = self.relu(z)
 
+            self.Z.append(z)
             self.A.append(a)
 
         return self.A[-1]
@@ -107,6 +140,31 @@ class NeuralNetwork:
     # ------------------------------------------------------------------ #
     #  Backward                                                            #
     # ------------------------------------------------------------------ #
+
+    def batchnorm_backward(self, dZ_bn, layer_idx):
+      eps   = 1e-8
+      n     = dZ_bn.shape[0]
+      Z_norm = self.Z_norm[layer_idx]
+      var    = self.Z_var[layer_idx]
+      mean   = self.Z_mean[layer_idx]
+      Z      = Z_norm * np.sqrt(var + eps) + mean  # recover original Z
+
+      # gradients for gamma and beta
+      dgamma = np.sum(dZ_bn * Z_norm, axis=0, keepdims=True)
+      dbeta  = np.sum(dZ_bn, axis=0, keepdims=True)
+
+      # store for update later
+      self.dgamma[layer_idx] = dgamma
+      self.dbeta[layer_idx]  = dbeta
+
+      # gradient to pass back through normalization
+      dZ_norm = dZ_bn * self.gamma[layer_idx]
+      dvar    = np.sum(dZ_norm * (Z - mean) * -0.5 * (var + eps) ** -1.5, axis=0, keepdims=True)
+      dmean   = np.sum(dZ_norm * -1 / np.sqrt(var + eps), axis=0, keepdims=True)
+      dZ      = dZ_norm / np.sqrt(var + eps) + dvar * 2 * (Z - mean) / n + dmean / n
+
+      return dZ
+
     def backward(self, y, optimizer='Adam', lr=0.001):
         """
         Output layer gradient depends on output activation + loss pairing:
@@ -130,6 +188,8 @@ class NeuralNetwork:
                 dZ = dA                                     # output layer
             else:
                 dZ = dA * self.relu_derivative(self.Z[i])  # hidden layers
+                if self.batch_norm:
+                  dZ = self.batchnorm_backward(dZ, layer_idx=i)
 
             dW = self.A[i].T @ dZ / n
             db = np.sum(dZ, axis=0, keepdims=True) / n
@@ -148,6 +208,11 @@ class NeuralNetwork:
             else:
               self.weights[i] -= lr * dW
               self.biases[i]  -= lr * db
+        # after the loop — update gamma and beta same as weights
+        if self.batch_norm:  
+          for i in range(len(self.gamma)):
+              self.gamma[i] -= lr * self.dgamma[i]
+              self.beta[i]  -= lr * self.dbeta[i]
 
     # ------------------------------------------------------------------ #
     #  Helpers                                                             #
@@ -170,10 +235,24 @@ class NeuralNetwork:
         else:
             return X, self.to_onehot(y, num_classes=2)
 
+    def lr_decay(self, lr, epoch, mode='none', decay_rate=0.5, step_size=10):
+      if mode == 'none':
+          return lr
+      elif mode == 'step':
+          if epoch % step_size == 0 and epoch > 0:   # ← boundary check lives here
+              return lr * decay_rate
+          return lr                                   # ← unchanged otherwise
+      elif mode == 'exponential':
+          return lr * (decay_rate ** epoch)
+      elif mode == '1/t':
+          return lr / (1 + decay_rate * epoch)
+
     # ------------------------------------------------------------------ #
     #  Train                                                               #
     # ------------------------------------------------------------------ #
-    def train(self, X, y, epochs=20, lr=0.001, batch_size=64, loss='categorical', optimizer='Adam', verbose=True):
+    def train(self, X, y, epochs=20, lr=0.001, batch_size=64, 
+          loss='categorical', optimizer='Adam', verbose=True,
+          lr_decay='none', decay_rate=0.5, step_size=10):
         self.t = 0
         n = X.shape[0]
         for epoch in range(epochs):
@@ -183,25 +262,29 @@ class NeuralNetwork:
             epoch_loss  = 0
             num_batches = 0
 
-            for start in range(0, n, batch_size):
-                X_batch = X[start:start + batch_size]
-                y_batch = y[start:start + batch_size]
+            current_lr = self.lr_decay(lr, epoch=epoch, 
+                                       mode=lr_decay, decay_rate=decay_rate, 
+                                       step_size=step_size)
 
-                y_pred = self.forward(X_batch)
-                epoch_loss += self.compute_loss(y_batch, y_pred, loss=loss)
-                self.backward(y_batch, lr=lr, optimizer=optimizer)
-                num_batches += 1
+            for start in range(0, n, batch_size):
+              X_batch = X[start:start + batch_size]
+              y_batch = y[start:start + batch_size]
+
+              y_pred = self.forward(X_batch, training=True)
+              epoch_loss += self.compute_loss(y_batch, y_pred, loss=loss)
+              self.backward(y_batch, lr=current_lr, optimizer=optimizer)
+              num_batches += 1
 
             if verbose and (epoch % max(1, epochs // 10) == 0 or epoch == epochs - 1):
                 avg_loss = epoch_loss / num_batches
-                print(f"Epoch {epoch+1:>4}/{epochs}  |  Loss: {avg_loss:.4f}")
+                print(f"Epoch {epoch+1:>4}/{epochs}  |  Loss: {avg_loss:.4f}  |  LR: {current_lr}")
 
     # ------------------------------------------------------------------ #
     #  Evaluate & Predict                                                  #
     # ------------------------------------------------------------------ #
     def evaluate(self, X, y, loss='categorical'):
         """Returns accuracy for classification, MSE for regression."""
-        y_pred = self.forward(X)
+        y_pred = self.forward(X, training=False)
         if loss == 'categorical':
             return np.mean(np.argmax(y_pred, axis=1) == np.argmax(y, axis=1))
         elif loss == 'binary':
@@ -210,7 +293,7 @@ class NeuralNetwork:
             return self.compute_loss(y, y_pred, loss='mse')
 
     def predict(self, X):
-        y_pred = self.forward(X)
+        y_pred = self.forward(X, training=False)
         if self.output == 'softmax':
             return np.argmax(y_pred, axis=1)
         elif self.output == 'sigmoid':
