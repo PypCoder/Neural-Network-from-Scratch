@@ -2,7 +2,7 @@
 
 A fully functional feedforward neural network built using only NumPy — no PyTorch, no TensorFlow, no shortcuts.
 
-Built iteratively as a learning project, implementing every component by hand including forward propagation, backpropagation, Adam optimizer, Batch Normalization, and Learning Rate Decay.
+Built iteratively as a learning project, implementing every component by hand including forward propagation, backpropagation, Adam optimizer, Batch Normalization, Dropout, and Learning Rate Decay. Features a clean, modular layer-based architecture.
 
 **Achieves 97.93% accuracy on MNIST.**
 
@@ -10,83 +10,196 @@ Built iteratively as a learning project, implementing every component by hand in
 
 ## What's implemented
 
-- Dynamic architecture — define any depth/width via a layer list e.g. `[784, 128, 64, 10]`
-- He weight initialization
-- Activations: ReLU (hidden layers), Sigmoid, Softmax, Linear (output)
-- Loss functions: Categorical Cross-Entropy, Binary Cross-Entropy, MSE
-- Optimizers: Adam, SGD
-- Mini-batch gradient descent
-- Batch Normalization (toggleable via `batch_norm=True/False`)
-- Learning Rate Decay — Step, Exponential, and 1/t schedules
-- Supports binary classification, multiclass classification, and regression
+- **Modular Layer-Based Architecture** — compose networks from independent layer objects
+- **Layers**: Dense (fully connected), ReLU, Sigmoid, Softmax, Batch Normalization, Dropout
+- **Optimizers**: Adam (with momentum + RMSprop), SGD
+- **Regularization**: Dropout, Batch Normalization, L2 (via weight decay)
+- **Learning Rate Schedules**: Step decay, Exponential decay, 1/t decay
+- **Loss Functions**: Categorical Cross-Entropy, Binary Cross-Entropy, MSE
+- **Initialization**: He initialization for ReLU networks
+- **Training Features**: Mini-batch gradient descent, training/test mode switching
+- **Supports**: Binary classification, multiclass classification, regression
 
 ---
 
-## Usage
+## Quick Start
+
+### Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### Usage
 
 ```python
-from neural_network import NeuralNetwork
+from nn import NeuralNetwork, Dense, BatchNorm, ReLU, Dropout, Softmax
+from nn.data.mnist import load_data
 
-# Multiclass — MNIST with Batch Norm + LR Decay
-nn = NeuralNetwork([784, 128, 64, 10], output='softmax', batch_norm=True)
-nn.train(X_train, y_train, epochs=20, lr=0.001, batch_size=64,
-         loss='categorical', optimizer='Adam',
-         lr_decay='step', decay_rate=0.5, step_size=10)
-print(nn.evaluate(X_test, y_test, loss='categorical'))
+# Load MNIST
+X_train, y_train, X_test, y_test = load_data(n_train=5000, n_test=1000)
 
-# Binary — XOR
-nn = NeuralNetwork([2, 4, 1], output='sigmoid', batch_norm=False)
-nn.train(X, y, epochs=2000, lr=0.01, batch_size=4, loss='binary', optimizer='Adam')
-print(nn.predict(X))
+# Build model with layer composition
+model = NeuralNetwork([
+    Dense(784, 128, use_adam=True),
+    BatchNorm(128),
+    ReLU(),
+    Dropout(0.5),
+    Dense(128, 64, use_adam=True),
+    BatchNorm(64),
+    ReLU(),
+    Dropout(0.5),
+    Dense(64, 10, use_adam=True),
+    Softmax()
+])
+
+# Train
+model.train(
+    X_train, y_train,
+    epochs=20,
+    lr=0.001,
+    batch_size=64,
+    loss='categorical',
+    lr_decay='step',
+    step_size=10
+)
+
+# Evaluate
+acc = model.evaluate(X_test, y_test, loss='categorical')
+print(f"Test Accuracy: {acc * 100:.2f}%")
+```
+
+---
+
+## Examples
+
+Run the included examples:
+
+```bash
+# XOR problem (quick sanity check)
+python examples/xor.py
+
+# MNIST digit classification (full training)
+python examples/mnist.py
+```
+
+Both examples use flexible data loaders that let you control dataset size:
+
+```python
+# XOR with 100 noisy samples
+from nn.data.xor import load_data
+X, y = load_data(n_samples=100, one_hot=True)
+
+# MNIST with 5000 training samples
+from nn.data.mnist import load_data
+X_train, y_train, X_test, y_test = load_data(n_train=5000, n_test=1000)
 ```
 
 ---
 
 ## Results
 
-| Dataset | Architecture       | Optimizer | Batch Norm | LR Decay | Epochs | Accuracy |
-|---------|--------------------|-----------|------------|----------|--------|----------|
-| XOR     | [2, 8, 2]          | Adam      | ✅         | —        | 3000   | 100%     |
-| MNIST   | [784, 128, 64, 10] | Adam      | ✅         | Step     | 20     | 97.93%   |
+| Dataset | Architecture       | Optimizer | Batch Norm | Dropout | LR Decay | Epochs | Accuracy |
+|---------|--------------------|-----------|------------|---------|----------|--------|----------|
+| XOR     | [2, 16, 2]         | Adam      | ✅         | 30%     | —        | 2000   | 100%     |
+| MNIST   | [784, 128, 64, 10] | Adam      | ✅         | 50%     | Step     | 20     | 97.93%   |
 
 ---
 
-## Install
-
-```bash
-pip install numpy scikit-learn
-```
-
----
-
-## Structure
+## Project Structure
 
 ```
 neural-network-from-scratch/
-├── neural_network.py        # full implementation
-├── nn_from_scratch.ipynb    # development notebook with experiments
+├── nn/                          # Core package
+│   ├── __init__.py              # Clean imports
+│   ├── layers/
+│   │   ├── __init__.py
+│   │   ├── core.py              # Dense layer
+│   │   ├── activations.py       # ReLU, Sigmoid, Softmax
+│   │   └── regularization.py    # BatchNorm, Dropout
+│   ├── datasets/
+│   │   ├── xor.py               # XOR data loader
+│   │   └── mnist.py             # MNIST data loader
+│   └── network.py               # NeuralNetwork class
+├── examples/
+│   ├── xor.py                   # Runnable XOR example
+│   └── mnist.py                 # Runnable MNIST example
+├── notebooks/
+│   └── development.ipynb        # Development notebook
 ├── requirements.txt
+├── .gitignore
+├── LICENSE
 └── README.md
+```
+
+---
+
+## Architecture Highlights
+
+### Modular Layer Design
+
+Every component is a self-contained layer with three methods:
+
+```python
+class Layer:
+    def forward(self, X, training=True):  # Compute output
+    def backward(self, dout):             # Compute gradients
+    def update(self, lr):                 # Update parameters
+```
+
+This makes the network composable and extensible:
+
+```python
+# Define network as a list of layers
+model = NeuralNetwork([
+    Dense(input_size, hidden_size),
+    BatchNorm(hidden_size),
+    ReLU(),
+    Dropout(0.5),
+    Dense(hidden_size, output_size),
+    Softmax()
+])
+```
+
+### Training Loop
+
+Clean separation of concerns:
+
+```python
+y_pred = model.forward(X, training=True)  # Forward pass
+loss = compute_loss(y, y_pred)            # Compute loss
+model.backward(y_pred - y)                # Backpropagation
+model.update(lr)                          # Update weights
 ```
 
 ---
 
 ## Roadmap
 
-This is an active learning project. Planned additions:
-
 - [x] Learning rate decay
 - [x] Batch Normalization
-- [ ] Dropout regularization
-- [ ] Modular layer-based architecture (v2)
+- [x] Dropout regularization
+- [x] Modular layer-based architecture
+- [ ] Convolution layers
+- [ ] More optimizers (RMSprop standalone, AdaGrad)
 - [ ] Paper-style documentation with full derivations
+- [ ] Visualization tools (loss curves, weight distributions)
 
 ---
 
+## Why This Exists
+
 > Built from scratch to actually understand what's happening — not just call `.fit()`.
 
+This project is a learning journey through neural network fundamentals. Every line of code was written to understand the math, not to match framework performance. If you want production code, use PyTorch. If you want to understand backpropagation, start here.
+
+---
+
 <p align="center">
+  <a href="https://github.com/PypCoder/Neural-Network-from-Scratch" target="_blank">
+    <img src="https://img.shields.io/badge/⭐_Star_on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="Star on GitHub"/>
+  </a>
   <a href="https://github.com/PypCoder" target="_blank">
-    <img src="https://img.shields.io/badge/GitHub-PypCoder-181717?style=for-the-badge&logo=github&logoColor=white" alt="PypCoder GitHub"/>
+    <img src="https://img.shields.io/badge/Follow-PypCoder-181717?style=for-the-badge&logo=github&logoColor=white" alt="Follow PypCoder"/>
   </a>
 </p>
