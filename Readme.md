@@ -10,7 +10,7 @@ Built iteratively as a learning project, implementing every component by hand in
 
 ## What's implemented
 
-- **Modular Layer-Based Architecture** — compose networks from independent layer objects
+- **Modular Layer-Based Architecture**: Compose networks from independent layer objects
 - **Layers**: Dense (fully connected), ReLU, Sigmoid, Softmax, Batch Normalization, Dropout
 - **Optimizers**: Adam (with momentum + RMSprop), SGD
 - **Regularization**: Dropout, Batch Normalization, L2 (via weight decay)
@@ -188,16 +188,12 @@ model.update(lr)                          # Update weights
 - [x] Batch Normalization
 - [x] Dropout regularization
 - [x] Modular layer-based architecture
-- [ ] Convolution layers
-- [ ] More optimizers (RMSprop standalone, AdaGrad)
-- [ ] Paper-style documentation with full derivations
-- [ ] Visualization tools (loss curves, weight distributions)
 
 ---
 
 ## Why This Exists
 
-> Built from scratch to actually understand what's happening — not just call `.fit()`.
+> Built from scratch to actually understand what's happening, not just call `.fit()`.
 
 This project is a learning journey through neural network fundamentals. Every line of code was written to understand the math, not to match framework performance. If you want production code, use PyTorch. If you want to understand backpropagation, start here.
 
